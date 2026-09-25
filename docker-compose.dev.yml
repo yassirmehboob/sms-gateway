@@ -1,0 +1,18 @@
+services:
+  mariadb:
+    image: mariadb:11.8
+    environment:
+      MARIADB_ROOT_PASSWORD: root_dev_only
+      MARIADB_USER: gateway
+      MARIADB_PASSWORD: gateway_dev
+      MARIADB_DATABASE: gateway
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - gateway_mariadb:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      retries: 10
+volumes:
+  gateway_mariadb:

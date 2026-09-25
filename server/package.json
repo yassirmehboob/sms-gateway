@@ -1,0 +1,41 @@
+{
+  "name": "sms-gateway-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "migrate": "tsx src/db/migrate.ts",
+    "seed:dev": "tsx src/db/seed.ts",
+    "test": "tsx --test src/tests/*.test.ts",
+    "operator": "tsx src/operator.ts",
+    "admin:create": "tsx src/admin-create.ts",
+    "worker:fcm": "tsx src/fcm-worker.ts"
+  },
+  "dependencies": {
+    "dotenv": "^18.0.3",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.7.0",
+    "firebase-admin": "^14.4.0",
+    "helmet": "^8.3.0",
+    "libphonenumber-js": "^1.13.13",
+    "mariadb": "^3.5.4",
+    "zod": "^4.6.5"
+  },
+  "overrides": {
+    "gaxios": { "uuid": "^11.1.1" }
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.2",
+    "@types/supertest": "^7.2.1",
+    "supertest": "^7.3.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

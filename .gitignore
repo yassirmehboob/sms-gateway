@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+coverage/
+*.log
+.local/
+operator-command*.json
+android/.gradle/
+android/**/build/
+android/local.properties
+android/app/google-services.json

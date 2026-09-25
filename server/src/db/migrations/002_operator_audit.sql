@@ -1,0 +1,2 @@
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS reason_reference VARCHAR(128);
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS subject_hash CHAR(64);
