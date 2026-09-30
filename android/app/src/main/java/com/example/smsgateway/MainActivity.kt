@@ -43,7 +43,7 @@ class MainActivity : Activity() {
         label("SMS Gateway", 26f)
         label("Dedicated phone • private deployment\nStarts paused. Only approved, single-segment messages are supported.")
         status = label("Loading…")
-        val origin = field(if (BuildConfig.DEBUG) "API origin (HTTPS or local HTTP)" else "HTTPS API origin", secrets.get("origin") ?: "")
+        val origin = field(if (BuildConfig.DEBUG) "API base URL (HTTPS or local HTTP; optional /sms-gateway)" else "HTTPS API base URL (optional /sms-gateway)", secrets.get("origin") ?: "")
         val device = field("Operator-assigned device UUID", secrets.get("deviceId") ?: "")
         button("Save gateway identity") {
             try {

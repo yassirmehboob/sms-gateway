@@ -12,7 +12,7 @@ export function deviceRoutes(db:Database,key:string) {
     if(req.method!=='POST' || req.originalUrl.includes('?')) throw new ApiError(400,'INVALID_DEVICE_REQUEST');
     const parsed=proofSchema.safeParse({deviceId:req.header('X-Device-Id'),timestamp:req.header('X-Device-Timestamp'),nonce:req.header('X-Device-Nonce'),signature:req.header('X-Device-Signature')});
     if(!parsed.success) throw new ApiError(401,'DEVICE_PROOF_REQUIRED');
-    res.locals.proof={...parsed.data,method:req.method,path:req.originalUrl,body:res.locals.rawBody ?? Buffer.alloc(0)} satisfies DeviceProof;
+    res.locals.proof={...parsed.data,method:req.method,path:res.locals.externalUrl ?? req.originalUrl,body:res.locals.rawBody ?? Buffer.alloc(0)} satisfies DeviceProof;
     next();
   });
   router.post('/enroll',async(req,res)=>res.json(await service.enroll(res.locals.proof,req.body)));

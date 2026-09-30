@@ -12,9 +12,12 @@ class ProtocolTest {
         assertFalse(value.endsWith("\n"))
         assertNotEquals(value, Protocol.signingText("device", 1790000000, "nonce", "/v1/device/jobs/claim", bytes))
     }
-    @Test fun originRejectsCleartextCredentialsAndPaths() {
+    @Test fun baseUrlAllowsSubfoldersAndRejectsAmbiguousPaths() {
         assertEquals("https://gateway.example", Protocol.origin("https://gateway.example/"))
-        for (bad in listOf("http://gateway.example", "https://user:pass@gateway.example", "https://gateway.example/api", "https://gateway.example?token=secret")) {
+        assertEquals("https://gateway.example/sms-gateway", Protocol.origin("https://gateway.example/sms-gateway/"))
+        assertEquals("/sms-gateway/v1/device/heartbeat", Protocol.devicePath("https://gateway.example/sms-gateway", "/heartbeat"))
+        assertEquals("/v1/device/heartbeat", Protocol.devicePath("https://gateway.example", "/heartbeat"))
+        for (bad in listOf("http://gateway.example", "https://user:pass@gateway.example", "https://gateway.example/a/../b", "https://gateway.example//api", "https://gateway.example/a%2fb", "https://gateway.example?token=secret", "https://gateway.example/api#fragment")) {
             assertThrows(IllegalArgumentException::class.java) { Protocol.origin(bad) }
         }
     }
@@ -31,7 +34,8 @@ class ProtocolTest {
             assertEquals(origin, Protocol.origin(origin, true))
             assertThrows(IllegalArgumentException::class.java) { Protocol.origin(origin, false) }
         }
-        for (bad in listOf("http://example.com", "http://8.8.8.8", "http://172.32.0.1", "http://192.168.1.10/api", "http://user@192.168.1.10", "http://192.168.1.10:99999")) {
+        assertEquals("http://192.168.1.10/api", Protocol.origin("http://192.168.1.10/api", true))
+        for (bad in listOf("http://example.com", "http://8.8.8.8", "http://172.32.0.1", "http://192.168.1.10/a/../b", "http://user@192.168.1.10", "http://192.168.1.10:99999")) {
             assertThrows(IllegalArgumentException::class.java) { Protocol.origin(bad, true) }
         }
     }

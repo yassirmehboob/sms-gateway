@@ -9,25 +9,36 @@ import { contentCipher,digest } from '../security/crypto.js';
 import { passwordHash,passwordMatches,base32,verifyTotp,csrfToken,safeEqual } from '../security/admin-auth.js';
 import { ApiError } from '../services/policy.js';
 import { adminCommand } from '../services/admin-commands.js';
+import { cmsPublicOrigin } from '../deployment.js';
 
 const cookie='gateway_cms';
 const loginSchema=z.object({username:z.string().trim().toLowerCase().min(3).max(80),password:z.string().min(1).max(256),code:z.string().max(6).optional()}).strict();
 let dummyHash:Promise<string>|undefined;
-export function adminRoutes(db:Database,key:string) {
+export function adminRoutes(db:Database,key:string,options:{basePath?:string;publicOrigin?:string}={}) {
  const router=Router(),cipher=contentCipher(key);
+ const publicOrigin=cmsPublicOrigin(options.publicOrigin);
+ const cookiePath=`${options.basePath??''}/admin`;
  router.use((req,res,next)=>{
-   // Local administration only. Never trust forwarded addresses or arbitrary Host headers.
-   if(!['127.0.0.1','::1','::ffff:127.0.0.1'].includes(req.socket.remoteAddress??'') || !['localhost','127.0.0.1','[::1]'].includes(req.hostname))throw new ApiError(403,'CMS_LOCAL_ONLY');
+   // Match the actual Host, never a caller-controlled X-Forwarded-Host.
+   const localHost=/^(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i.test(req.get('host')??'');
+   if(publicOrigin) {
+     if((req.get('host')??'').toLowerCase()!==new URL(publicOrigin).host)throw new ApiError(403,'CMS_HOST_REJECTED');
+     if(!req.secure || (req.header('X-Forwarded-Proto') && req.header('X-Forwarded-Proto')!=='https'))throw new ApiError(403,'CMS_HTTPS_REQUIRED');
+   } else if(!['127.0.0.1','::1','::ffff:127.0.0.1'].includes(req.socket.remoteAddress??'') || !localHost || req.header('X-Forwarded-For') || req.header('X-Forwarded-Host') || req.header('X-Forwarded-Proto'))throw new ApiError(403,'CMS_LOCAL_ONLY');
    res.setHeader('Cache-Control','no-store');
    if(req.method!=='GET' && req.method!=='HEAD') {
      if(req.header('X-CMS-Request')!=='1' || !req.is('application/json'))throw new ApiError(403,'CMS_REQUEST_REJECTED');
-     if(req.header('Origin') && req.header('Origin')!==`${req.protocol}://${req.get('host')}`)throw new ApiError(403,'CMS_ORIGIN_REJECTED');
+     const expectedOrigin=publicOrigin??`${req.protocol}://${req.get('host')}`;
+     if((publicOrigin || req.header('Origin')) && req.header('Origin')!==expectedOrigin)throw new ApiError(403,'CMS_ORIGIN_REJECTED');
    }
    next();
  });
  router.use(helmet({contentSecurityPolicy:{directives:{'upgrade-insecure-requests':null}}}));
  const publicRoot=fileURLToPath(new URL('../../public/admin/',import.meta.url));
- router.get('/',(_req,res)=>res.sendFile(`${publicRoot}index.html`));
+ router.get('/',(req,res)=>{
+   if(!(res.locals.externalUrl??req.originalUrl).split('?')[0].endsWith('/'))return res.redirect(308,`${cookiePath}/`);
+   res.sendFile(`${publicRoot}index.html`);
+ });
  router.use('/assets',express.static(publicRoot,{index:false,dotfiles:'deny'}));
  const loginLimit=rateLimit({windowMs:15*60*1000,limit:15,standardHeaders:true,legacyHeaders:false});
  async function issue(userId:string,verified:boolean) {
@@ -54,7 +65,7 @@ export function adminRoutes(db:Database,key:string) {
    });
    if(!outcome)throw new ApiError(401,'INVALID_LOGIN');
    const token=await issue(outcome.id,Boolean(outcome.totp_enabled));
-   res.cookie(cookie,token,{httpOnly:true,sameSite:'strict',secure:req.secure,path:'/admin',maxAge:outcome.totp_enabled?28800000:900000});
+   res.cookie(cookie,token,{httpOnly:true,sameSite:'strict',secure:Boolean(publicOrigin)||req.secure,path:cookiePath,maxAge:outcome.totp_enabled?28800000:900000});
    res.json({username:outcome.username,role:outcome.role,mfaRequired:!outcome.totp_enabled,csrf:csrfToken(token,key)});
  });
  router.use('/api',async(req,res,next)=>{
@@ -68,7 +79,7 @@ export function adminRoutes(db:Database,key:string) {
    next();
  });
  router.get('/api/session',(_req,res)=>res.json({username:res.locals.admin.username,role:res.locals.admin.role,mfaRequired:!res.locals.admin.mfa_verified,csrf:res.locals.csrf}));
- router.post('/api/logout',async(_req,res)=>{await db.query('DELETE FROM cms_sessions WHERE token_hash=?',[res.locals.admin.token_hash]);res.clearCookie(cookie,{path:'/admin'});res.json({ok:true});});
+ router.post('/api/logout',async(_req,res)=>{await db.query('DELETE FROM cms_sessions WHERE token_hash=?',[res.locals.admin.token_hash]);res.clearCookie(cookie,{path:cookiePath,secure:Boolean(publicOrigin),httpOnly:true,sameSite:'strict'});res.json({ok:true});});
  router.post('/api/mfa/setup',loginLimit,async(_req,res)=>{
    const secret=base32(randomBytes(20));const id=res.locals.admin.id;
    await db.transaction(async tx=>{
@@ -90,7 +101,7 @@ export function adminRoutes(db:Database,key:string) {
      await tx.query("INSERT INTO audit_logs (actor_id,action,resource_id) VALUES (?,'CMS_MFA_ENABLED',?)",[id,id]);
    });
    const token=await issue(id,true);
-   res.cookie(cookie,token,{httpOnly:true,sameSite:'strict',secure:req.secure,path:'/admin',maxAge:28800000});
+   res.cookie(cookie,token,{httpOnly:true,sameSite:'strict',secure:Boolean(publicOrigin)||req.secure,path:cookiePath,maxAge:28800000});
    res.json({csrf:csrfToken(token,key),ok:true});
  });
  router.post('/api/password',loginLimit,async(req,res)=>{
@@ -103,7 +114,7 @@ export function adminRoutes(db:Database,key:string) {
      await tx.query('DELETE FROM cms_sessions WHERE user_id=?',[id]);
      await tx.query("INSERT INTO audit_logs (actor_id,action,resource_id) VALUES (?,'CMS_PASSWORD_CHANGED',?)",[id,id]);
    });
-   res.clearCookie(cookie,{path:'/admin'});res.json({ok:true});
+   res.clearCookie(cookie,{path:cookiePath,secure:Boolean(publicOrigin),httpOnly:true,sameSite:'strict'});res.json({ok:true});
  });
  router.get('/api/overview',async(_req,res)=>{
    const [settings,tenants,devices,clients,counts]=await Promise.all([

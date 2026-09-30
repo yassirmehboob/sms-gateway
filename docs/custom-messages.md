@@ -8,7 +8,8 @@ Send `POST /v1/messages` with `Authorization: Bearer YOUR_API_KEY` and `Content-
 {
   "to": "+923001234567",
   "body": "Hello Ali, your order 123 is ready for collection.",
-  "includeOptOut": true
+  "includeOptOut": true,
+  "evidenceReference": "CUSTOMER-SIGNUP-123"
 }
 ```
 
@@ -20,7 +21,11 @@ Only one SMS segment is supported: up to 160 GSM-7 units, with extension charact
 
 Empty/whitespace-only text, malformed Unicode, and unsupported control characters are rejected. Line breaks are allowed. Over-segment text returns HTTP 422 `MESSAGE_TOO_LONG`; malformed/empty content returns 400 `INVALID_REQUEST` or 422 `INVALID_MESSAGE_BODY`. Request schema validation also rejects bodies longer than 4096 UTF-16 units.
 
-Consent, suppression, API scopes, global/device pause, five-minute destination cooldown, quotas, 24-hour content replay protection and encrypted storage apply equally to custom messages. This is not a consent bypass. Record actual consent using the operator CLI before submission.
+Optional `evidenceReference` records permission your project already collected outside the gateway. If consent is missing for the API key's tenant, recipient and purpose, the same transaction creates it and queues the message. The reference must be 3–128 characters using letters, digits, `_`, `.`, `:`, `/` or `-` (no spaces). It is stored as consent evidence and in a `CONSENT_RECORDED_ON_SEND` audit entry linked to the API client and message; it is never appended to the SMS.
+
+Existing active consent is reused without replacing its evidence. Without a reference, missing consent still returns `CONSENT_REQUIRED`. Supplying a reference cannot restore revoked consent (`CONSENT_REVOKED`), clear SMS STOP (`RECIPIENT_OPTED_OUT`), or override manual suppression (`RECIPIENT_SUPPRESSED`). API scopes, global/device pause, cooldown, quotas, content replay protection and encrypted storage still apply. If acceptance fails, new consent and its audit entry roll back with the message. Each tenant must provide its own evidence; another tenant's consent is not reused. Retries with the same idempotency key must also preserve the evidence reference; changing it returns `IDEMPOTENCY_CONFLICT`.
+
+On cPanel the endpoint is `POST https://itsc.usindh.edu.pk/sms-gateway/v1/messages`. Upload and extract `.local/cpanel-inline-consent-update.zip` in the application root, replacing `dist`, `public` and `app.cjs`, then restart in cPanel. Preserve your existing `.env`. No migration, dependency installation, Android update or cPanel terminal is required.
 
 HTTP 202 returns `jobId` and `statusUrl`, meaning queued rather than delivered. GET that status URL with the same Bearer key to track delivery. If you omit `Idempotency-Key`, the server generates a fresh key per request and returns it in the response's `Idempotency-Key` header. Repeating a request without a key does not return the original job; it is a new submission subject to cooldown and 24-hour content replay protection. Check message status/list after a lost response instead of blindly resubmitting.
 

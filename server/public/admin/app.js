@@ -6,7 +6,7 @@ const errors={CMS_LOGIN_REQUIRED:'Please sign in again.',INVALID_LOGIN:'Invalid 
 async function api(path,body){
  const options={credentials:'same-origin',headers:{'X-CMS-Request':'1'}};
  if(body!==undefined){options.method='POST';options.headers['Content-Type']='application/json';options.headers['X-CSRF-Token']=state.session?.csrf??'';options.body=JSON.stringify(body);}
- const response=await fetch(`/admin/api${path}`,options);let result;
+ const response=await fetch(new URL(`api${path}`, window.location.href),options);let result;
  try{result=await response.json();}catch{throw new Error('Server returned an unexpected response. Check that the API is running.');}
  if(!response.ok){if(response.status===401 && result.code==='CMS_LOGIN_REQUIRED'){state.session=null;showSession();}throw new Error(errors[result.code]??result.code??`Request failed (${response.status})`);}
  return result;
@@ -76,7 +76,7 @@ async function overview(){
    const div=document.createElement('div');div.className='stat';const strong=document.createElement('strong');strong.textContent=value;const span=document.createElement('span');span.textContent=label;div.append(strong,span);$('stats').append(div);
  }
  $('configuration').replaceChildren();
- for(const [label,value] of [['API address',`${data.configuration.apiHost}:${data.configuration.apiPort}`],['FCM worker enabled',data.configuration.fcmEnabled?'Yes':'No'],['Firebase project configured',data.configuration.firebaseConfigured?'Yes':'No'],['Credential file configured',data.configuration.credentialsConfigured?'Yes':'No'],['Admin access','This computer only']]){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=value;$('configuration').append(dt,dd);}
+ for(const [label,value] of [['API address',`${data.configuration.apiHost}:${data.configuration.apiPort}`],['FCM worker enabled',data.configuration.fcmEnabled?'Yes':'No'],['Firebase project configured',data.configuration.firebaseConfigured?'Yes':'No'],['Credential file configured',data.configuration.credentialsConfigured?'Yes':'No'],['Admin access',window.location.origin]]){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=value;$('configuration').append(dt,dd);}
  for(const name of Object.keys(fieldDefinitions))$('settings-form').elements[name].value=data.settings[name];
  document.querySelectorAll('.tenant-select').forEach(select=>{const previous=select.value;select.replaceChildren();data.tenants.forEach(t=>{const option=document.createElement('option');option.value=t.id;option.textContent=`${t.name} (${t.id})`;select.append(option);});if(data.tenants.some(t=>t.id===previous))select.value=previous;});
  const deviceSelect=$('enrollment-device'),selected=deviceSelect.value;deviceSelect.replaceChildren();data.devices.filter(d=>!d.enrolled&&!d.revoked_at).forEach(d=>{const option=document.createElement('option');option.value=d.id;option.textContent=`${tenantName(d.tenant_id)} · ${d.id}`;deviceSelect.append(option);});if([...deviceSelect.options].some(o=>o.value===selected))deviceSelect.value=selected;

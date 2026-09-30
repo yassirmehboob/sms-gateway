@@ -28,8 +28,17 @@ export function messageService(db: Database, cipher: ReturnType<typeof contentCi
         const recipient = (await tx.query('SELECT suppressed, GREATEST(0, CEIL(TIMESTAMPDIFF(MICROSECOND, CURRENT_TIMESTAMP(6), next_allowed_at)/1000000)) AS retry_seconds FROM recipients WHERE normalized_e164=? FOR UPDATE', [message.to])).rows[0]!;
         if (recipient.suppressed) throw new ApiError(403, 'RECIPIENT_SUPPRESSED');
         if ((await tx.query('SELECT 1 FROM sms_preferences WHERE normalized_e164=? AND opted_out=true', [message.to])).rows.length) throw new ApiError(403, 'RECIPIENT_OPTED_OUT');
-        const consent = await tx.query('SELECT 1 FROM recipient_tenant_consents WHERE tenant_id=? AND normalized_e164=? AND purpose=? AND revoked_at IS NULL', [actor.tenant_id, message.to, message.purpose]);
-        if (!consent.rows.length) throw new ApiError(403, 'CONSENT_REQUIRED');
+        const jobId = randomUUID();
+        const consent = (await tx.query('SELECT revoked_at FROM recipient_tenant_consents WHERE tenant_id=? AND normalized_e164=? AND purpose=?', [actor.tenant_id, message.to, message.purpose])).rows[0];
+        if (consent?.revoked_at) throw new ApiError(403, 'evidenceReference' in message ? 'CONSENT_REVOKED' : 'CONSENT_REQUIRED');
+        if (!consent) {
+          const evidence = 'evidenceReference' in message ? message.evidenceReference : undefined;
+          if (!evidence) throw new ApiError(403, 'CONSENT_REQUIRED');
+          // The caller attests to permission already collected outside the gateway.
+          // This transaction also queues the message: any later rejection rolls both back.
+          await tx.query('INSERT INTO recipient_tenant_consents (tenant_id,normalized_e164,purpose,evidence) VALUES (?,?,?,?)', [actor.tenant_id,message.to,message.purpose,evidence]);
+          await tx.query("INSERT INTO audit_logs (tenant_id,actor_id,action,resource_id,reason_reference) VALUES (?,?,'CONSENT_RECORDED_ON_SEND',?,?)", [actor.tenant_id,actor.id,jobId,evidence]);
+        }
         if (Number(recipient.retry_seconds) > 0) throw new ApiError(429, 'RECIPIENT_COOLDOWN', Number(recipient.retry_seconds));
         const bodyHash = digest(message.body);
         const duplicate = await tx.query("SELECT 1 FROM outbound_messages WHERE tenant_id=? AND normalized_e164=? AND body_hash=? AND created_at > TIMESTAMPADD(HOUR,-?,CURRENT_TIMESTAMP(6))", [actor.tenant_id, message.to, bodyHash,settings.replay_window_hours]);
@@ -42,7 +51,6 @@ export function messageService(db: Database, cipher: ReturnType<typeof contentCi
           const usage = (await tx.query(`SELECT COUNT(*) AS count, CEIL(TIMESTAMPDIFF(MICROSECOND, CURRENT_TIMESTAMP(6), DATE_ADD(MIN(created_at), INTERVAL ? HOUR))/1000000) AS retry_seconds FROM outbound_messages WHERE ${column}=? AND created_at > DATE_SUB(CURRENT_TIMESTAMP(6), INTERVAL ? HOUR)`, [hours, value, hours])).rows[0]!;
           if (Number(usage.count) >= cap) throw new ApiError(429, code, Math.max(1, Number(usage.retry_seconds)));
         }
-        const jobId = randomUUID();
         await tx.query("INSERT INTO outbound_messages (id,tenant_id,client_id,device_id,normalized_e164,encrypted_body,body_hash,segments,expires_at) VALUES (?,?,?,?,?,?,?,1,TIMESTAMPADD(SECOND,?,CURRENT_TIMESTAMP(6)))", [jobId, actor.tenant_id, actor.id, device.id, message.to, cipher.encrypt(message.body, jobId), bodyHash,settings.message_ttl_seconds]);
         await tx.query("UPDATE recipients SET next_allowed_at=TIMESTAMPADD(SECOND,?,CURRENT_TIMESTAMP(6)) WHERE normalized_e164=?", [settings.cooldown_seconds,message.to]);
         await tx.query('INSERT INTO idempotency_keys VALUES (?,?,?,?)', [actor.tenant_id,key,fingerprint,jobId]);

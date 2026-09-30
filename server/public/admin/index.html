@@ -1,11 +1,11 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SMS Gateway · Management</title><link rel="stylesheet" href="/admin/assets/style.css"><script defer src="/admin/assets/app.js"></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SMS Gateway · Management</title><link rel="stylesheet" href="./assets/style.css"><script defer src="./assets/app.js"></script></head>
 <body>
 <header><div class="brand"><span class="mark">S</span><div><strong>SMS Gateway</strong><small>Management console</small></div></div><div id="identity"></div></header>
 <div id="notice" role="status" aria-live="polite" hidden></div>
 <main>
- <section id="login-panel" class="auth card" hidden><p class="eyebrow">LOCAL ADMINISTRATION</p><h1>Welcome back</h1><p class="muted">Manage your gateway from this computer.</p>
+ <section id="login-panel" class="auth card" hidden><p class="eyebrow">GATEWAY ADMINISTRATION</p><h1>Welcome back</h1><p class="muted">Sign in to manage your SMS gateway.</p>
  <form id="login-form"><label>Username<input name="username" autocomplete="username" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><label>Authenticator code<input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="Leave empty on your first login"></label><button>Sign in</button></form>
  <p class="muted">First time? Your login details are in the local CMS credentials file created by <code>admin:create</code>.</p></section>
  <section id="mfa-panel" class="auth card" hidden><p class="eyebrow">PROTECT YOUR ACCOUNT</p><h1>Set up your authenticator</h1><p>Add a time-based account in your authenticator app using this setup key. Use six digits and a 30-second interval.</p><button id="mfa-generate">Generate setup key</button><pre id="mfa-secret" hidden></pre><form id="mfa-form"><label>Six-digit code<input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autocomplete="one-time-code"></label><button>Verify and continue</button></form></section>

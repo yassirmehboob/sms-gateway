@@ -9,15 +9,25 @@ import { ApiError, normalizeNumber } from './services/policy.js';
 import { messageService, type Actor } from './services/messages.js';
 import { deviceRoutes } from './routes/devices.js';
 import { adminRoutes } from './routes/admin.js';
-export function createApp(db: Database, encryptionKey: string) {
+import { applicationBasePath, applicationUrls } from './deployment.js';
+export function createApp(db: Database, encryptionKey: string, options: { proxyHops?: number; basePath?: string; cmsOrigin?: string } = {}) {
   const app = express();
+  const basePath = applicationBasePath(options.basePath);
+  app.use((req, res, next) => {
+    const urls = applicationUrls(req.url, basePath);
+    req.url = urls.internal;
+    res.locals.externalUrl = urls.external;
+    next();
+  });
+  const proxyHops = z.number().int().min(0).max(10).parse(options.proxyHops ?? 0);
+  app.set('trust proxy', proxyHops === 0 ? false : proxyHops);
   const messages = messageService(db, contentCipher(encryptionKey));
   app.disable('x-powered-by');
   app.use(helmet());
   app.use(rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: 'draft-8', legacyHeaders: false }));
   app.use(express.json({ limit: '8kb', inflate:false, verify:(_req,res,body)=>{ (res as express.Response).locals.rawBody=Buffer.from(body); } }));
   app.get('/healthz', (_req, res) => res.json({ status: 'ok' }));
-  app.use('/admin',adminRoutes(db,encryptionKey));
+  app.use('/admin',adminRoutes(db,encryptionKey,{basePath,publicOrigin:options.cmsOrigin}));
   app.use('/v1/device',deviceRoutes(db,encryptionKey));
   app.use('/v1', async (req, res, next) => {
     const match = /^Bearer ([A-Za-z0-9_-]{32,256})$/.exec(req.headers.authorization ?? '');
@@ -38,6 +48,7 @@ export function createApp(db: Database, encryptionKey: string) {
     const identity = actor(res, 'sms:send');
     const key = z.string().min(8).max(128).regex(/^[A-Za-z0-9_-]+$/).optional().parse(req.header('Idempotency-Key')) ?? randomUUID();
     const result = await messages.create(identity, key, req.body);
+    result.statusUrl = basePath + result.statusUrl;
     res.status(202).set('Idempotency-Key', key).location(result.statusUrl).json(result);
   });
   app.get('/v1/messages/:id', async (req, res) => {

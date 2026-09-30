@@ -13,6 +13,7 @@ const customSchema = z.object({
   to: z.string().min(5).max(30),
   body: z.string().min(1).max(4096),
   includeOptOut: z.boolean().optional(),
+  evidenceReference: z.string().min(3).max(128).regex(/^[A-Za-z0-9_.:/-]+$/).optional(),
   purpose: z.literal('transactional_notification').default('transactional_notification'),
 }).strict();
 export const messageSchema = z.union([templateSchema, customSchema]);
@@ -48,7 +49,7 @@ export function canonicalMessage(input: unknown) {
   if ('body' in parsed) {
     const body = parsed.body + (parsed.includeOptOut ? '\nReply STOP to unsubscribe' : '');
     validateSmsBody(body);
-    return { to: normalizeNumber(parsed.to), purpose: parsed.purpose, body };
+    return { to: normalizeNumber(parsed.to), purpose: parsed.purpose, body, ...(parsed.evidenceReference === undefined ? {} : { evidenceReference: parsed.evidenceReference }) };
   }
   return { ...parsed, to: normalizeNumber(parsed.to), body: `Reminder: your appointment is on ${parsed.variables.date}. Reply STOP to unsubscribe` };
 }

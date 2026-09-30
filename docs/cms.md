@@ -1,6 +1,6 @@
 # Gateway management console
 
-Open **http://127.0.0.1:3001/admin/** on the backend PC while the Node API is running. The CMS listener is separate from the LAN API address used by Android. `CMS_PORT` defaults to 3001 and can be changed in `server/.env`. The CMS accepts only loopback connections with a localhost/IP Host header; it is not exposed as a remote admin portal.
+By default, open **http://127.0.0.1:3001/admin/** on the backend PC while the Node API is running. The CMS listener is separate from the LAN API address used by Android. `CMS_PORT` defaults to 3001 and can be changed in `server/.env`. The default CMS accepts only loopback connections with a localhost/IP Host header. To enable HTTPS access on your deployed domain, configure `CMS_PUBLIC_ORIGIN` and follow [the cPanel deployment instructions](cpanel.md#online-cms-without-a-cpanel-terminal).
 
 ## Login
 
@@ -41,7 +41,7 @@ Quota windows remain rolling 24 hours (recipient/device) and one hour (client). 
 
 START clears only the SMS preference. To restore delivery, existing consent must remain active and any manual suppression must also be cleared separately with an audit reference. STOP cancels unattempted jobs; START does not revive them or send an unsolicited confirmation. Older queued SMS control reports are fenced by the CMS change timestamp. The latest Android APK reconciles a previously acknowledged local STOP when it receives a fresh server-approved job; an unacknowledged/rejected STOP is never silently cleared.
 
-Database/Firebase secrets, encryption keys and network binding stay in `.env`; the CMS shows only configuration status. Public internet exposure, TLS/identity-provider integration, arbitrary caller-controlled overrides and general inbound-message viewing are not part of this local console.
+Database/Firebase secrets, encryption keys and network binding stay in `.env`; the CMS shows only configuration status. Optional remote access uses an explicitly configured HTTPS origin behind the hosting TLS proxy. External identity-provider integration and general inbound-message viewing are not implemented.
 
 ## Updated SMS wording
 
