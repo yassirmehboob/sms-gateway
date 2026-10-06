@@ -9,7 +9,7 @@ interface Dispatch {
 }
 // Selection and validation use the same durable policy lock as API mutations.
 const eligible=`m.status='QUEUED' AND m.send_attempt_started_at IS NULL AND m.expires_at>CURRENT_TIMESTAMP(6)
- AND t.enabled=true AND c.enabled=true AND d.revoked_at IS NULL AND d.tenant_id=m.tenant_id
+ AND t.enabled=true AND NOT EXISTS (SELECT 1 FROM tenant_plans tp WHERE tp.tenant_id=t.id AND tp.expires_at<=CURRENT_TIMESTAMP(6)) AND c.enabled=true AND d.revoked_at IS NULL AND d.tenant_id=m.tenant_id
  AND c.tenant_id=m.tenant_id AND r.suppressed=false
  AND JSON_CONTAINS(c.scopes, '"sms:send"')
  AND ((m.control_command='STOP' AND EXISTS (SELECT 1 FROM sms_preferences p WHERE p.normalized_e164=m.normalized_e164 AND p.opted_out=true))

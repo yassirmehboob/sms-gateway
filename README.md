@@ -1,5 +1,9 @@
 # Android SMS Gateway
 
+The CMS now supports creating administrators/viewers, multiple tenant assignments and per-section permissions. Existing admins retain full access as super administrators. Apply migration 008; see [CMS users and permissions](docs/cms-users-and-permissions.md).
+
+The management CMS supports contact entry, Excel import, groups, paced bulk SMS and scheduled batches. See [Contacts and bulk messaging](docs/contacts-and-bulk-messaging.md). This update requires migration 007 and an updated dependency installation.
+
 Development follows [the project plan](android_sms_gateway_project_plan.md), using MariaDB. The backend includes policy-protected queues, an audited operator CLI, signed device enrollment/requests, one-time send authorization, delivery events and an FCM worker. The first Android app implements enrollment, a durable attempt journal and selected-SIM outbound sending. Inbound handling and real-phone acceptance testing remain pending. See [development status](docs/development-status.md).
 
 ## Run locally
@@ -17,9 +21,9 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 Put the generated value into `CONTENT_ENCRYPTION_KEY` in `server/.env`. Generate a separate random value for `DEV_API_KEY`; keep both secret.
 
 ```powershell
+npm.cmd run build
 npm.cmd run migrate
 npm.cmd run seed:dev
-npm.cmd run build
 npm.cmd test
 npm.cmd run dev
 ```
@@ -61,3 +65,5 @@ npm.cmd test
 ```
 
 Integration tests create and remove their own randomly named databases, so the test account requires CREATE/DROP DATABASE and trigger permissions. Use a local disposable server, not production credentials. The concurrency test uses two pools and two tenants to race twelve submissions, then tests concurrent idempotent retries. CI supplies MariaDB and runs all tests. No test connects to FCM or telephony.
+
+Tenant defaults, per-tenant overrides and paid-service expiry are documented in [Tenant defaults and expiry](docs/tenant-defaults-and-expiry.md).

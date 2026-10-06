@@ -1,5 +1,9 @@
 # Gateway management console
 
+Administrators can now create CMS accounts, assign tenants, and choose section permissions in **CMS users**. Existing administrators become super administrators after migration 008. See [CMS users and permissions](cms-users-and-permissions.md) for setup, rights and deployment.
+
+The CMS also supports individual contacts, Excel imports, custom groups, selected-recipient/group batches, configurable bulk intervals and optional scheduling. See [Contacts, groups and scheduled SMS](contacts-and-bulk-messaging.md) for usage and migration 007 deployment steps.
+
 By default, open **http://127.0.0.1:3001/admin/** on the backend PC while the Node API is running. The CMS listener is separate from the LAN API address used by Android. `CMS_PORT` defaults to 3001 and can be changed in `server/.env`. The default CMS accepts only loopback connections with a localhost/IP Host header. To enable HTTPS access on your deployed domain, configure `CMS_PUBLIC_ORIGIN` and follow [the cPanel deployment instructions](cpanel.md#online-cms-without-a-cpanel-terminal).
 
 ## Login
@@ -20,7 +24,7 @@ For this workspace the migration and initial `admin` creation have already compl
 3. Open **Account** to change your password (minimum 12 characters). Changing it invalidates all sessions. Store the new password securely and delete the bootstrap credentials file when no longer needed.
 4. Subsequent logins require password and a current authenticator code. A code already used for login cannot be reused. After repeated failures, wait 15 minutes for the account/IP login limit to expire.
 
-Additional trusted administrators or read-only viewers can be provisioned from the host with `npm.cmd run admin:create -- another-admin admin` or `npm.cmd run admin:create -- reviewer viewer`. Each receives a separate local credentials file and must enroll an authenticator. If an administrator loses access, a trusted host operator can create a separate recovery administrator; no unauthenticated password/MFA reset endpoint exists. External identity-provider integration and a user-lifecycle management screen remain future work.
+Super administrators can create delegated administrators and viewers through **CMS users**. Host operators can also provision recovery super administrators with `node dist/admin-create.js another-admin admin` or all-tenant viewers with `node dist/admin-create.js reviewer viewer`. Host-created accounts receive a separate local credentials file and must enroll an authenticator. No unauthenticated password/MFA reset endpoint exists. External identity-provider integration remains future work.
 
 ## Screens
 
@@ -57,3 +61,5 @@ STOP and START now have separate confirmation intervals, so a first START after 
 Passwords use salted scrypt; authenticator secrets are AES-GCM encrypted. Server-side sessions store token hashes, expire after eight hours (15 minutes before MFA), use HttpOnly/SameSite cookies and rotate after authenticator setup. Mutations require a session-bound CSRF token, JSON and same-origin request checks. Viewer/admin authorization is checked server-side; policy changes recheck admin/session validity within the shared policy transaction. Writes and audit entries commit together, and policy edits retain before/after settings in the audit database. Raw credentials, SMS bodies and Firebase tokens are not returned by overview/status endpoints.
 
 The implementation follows [OWASP session guidance](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html) and uses [RFC 6238 TOTP](https://datatracker.ietf.org/doc/html/rfc6238). Local password/MFA authentication is implemented; this is not an external identity-provider integration or a production security certification.
+
+Tenant defaults, per-tenant overrides and paid-service expiry are documented in [Tenant defaults and expiry](tenant-defaults-and-expiry.md).

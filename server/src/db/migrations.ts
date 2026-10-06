@@ -8,7 +8,7 @@ export async function migrate(db: Database) {
     if (Number(rows[0]?.acquired) !== 1) throw new Error('Migration lock unavailable');
     try {
       await connection.query('CREATE TABLE IF NOT EXISTS schema_migrations (version VARCHAR(64) PRIMARY KEY, checksum CHAR(64) NOT NULL) ENGINE=InnoDB');
-      for (const name of ['001_foundation', '002_operator_audit', '003_device_protocol', '004_fcm_outbox', '005_sms_controls', '006_admin_cms']) {
+      for (const name of ['001_foundation', '002_operator_audit', '003_device_protocol', '004_fcm_outbox', '005_sms_controls', '006_admin_cms', '007_contacts_campaigns', '008_cms_access', '009_tenant_services']) {
         const sql = await readFile(new URL(`../../src/db/migrations/${name}.sql`, import.meta.url), 'utf8');
         const checksum = createHash('sha256').update(sql).digest('hex');
         const applied = (await connection.query('SELECT checksum FROM schema_migrations WHERE version=?', [name])).rows[0];

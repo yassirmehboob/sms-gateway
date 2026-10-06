@@ -1,3 +1,4 @@
+import { tenantPlan, tenantSettings } from './tenant-services.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Connection } from '../db/database.js';
@@ -25,7 +26,8 @@ export async function receiveControl(tx: Connection, device: Record<string,any>,
   const now = Number(device.server_seconds) * 1000;
   if (input.receivedAt > now + 120000) throw new ApiError(422,'INBOUND_CLOCK_SKEW');
   await tx.query('INSERT INTO sms_preferences (normalized_e164) VALUES (?) ON DUPLICATE KEY UPDATE normalized_e164=VALUES(normalized_e164)', [from]);
-  const settings = (await tx.query('SELECT * FROM gateway_settings WHERE id=1')).rows[0]!;
+  const settings=await tenantSettings(tx,device.tenant_id);
+  const plan=await tenantPlan(tx,device.tenant_id);
   const confirmationColumn = input.command === 'STOP' ? 'last_stop_confirmation_at' : 'last_start_confirmation_at';
   const preference = (await tx.query(`SELECT *,${confirmationColumn} IS NULL OR ${confirmationColumn}<TIMESTAMPADD(SECOND,-?,CURRENT_TIMESTAMP(6)) AS can_confirm FROM sms_preferences WHERE normalized_e164=? FOR UPDATE`, [settings.confirmation_cooldown_seconds,from])).rows[0]!;
   let confirmationJobId: string | null = null;
@@ -40,7 +42,7 @@ export async function receiveControl(tx: Connection, device: Record<string,any>,
     const budget = (await tx.query("SELECT COUNT(*) AS count FROM outbound_messages WHERE device_id=? AND created_at>CURRENT_TIMESTAMP(6)-INTERVAL 24 HOUR", [device.id])).rows[0]!;
     // Fixed confirmations are the only exception to SMS opt-out and recipient cooldown.
     // Separate per-keyword intervals let START confirm immediately after STOP.
-    if (changed && preference.can_confirm && !known.suppressed && Number(budget.count) < Number(settings.device_quota)) {
+    if (plan.active && changed && preference.can_confirm && !known.suppressed && Number(budget.count) < Number(settings.device_quota)) {
       confirmationJobId = randomUUID();
       const body = optedOut ? 'Your STOP request was received. Messages are stopped. Reply START to resume.' : 'Your START request is received. Messages are resumed';
       await tx.query("INSERT INTO outbound_messages (id,tenant_id,client_id,device_id,normalized_e164,encrypted_body,body_hash,segments,control_command,expires_at) VALUES (?,?,?,?,?,?,?,1,?,TIMESTAMPADD(SECOND,?,CURRENT_TIMESTAMP(6)))", [confirmationJobId,device.tenant_id,known.client_id,device.id,from,cipher.encrypt(body,confirmationJobId),digest(body),input.command,settings.message_ttl_seconds]);

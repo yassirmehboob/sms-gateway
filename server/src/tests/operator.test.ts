@@ -29,7 +29,7 @@ test('MariaDB operator changes are audited, atomic and preserve send protections
       await run({action:'global-pause',paused:false});
       await migrate(db);
       assert.equal(Number((await db.query('SELECT paused FROM gateway_settings')).rows[0]!.paused),0);
-      assert.equal((await db.query('SELECT * FROM schema_migrations')).rows.length,6);
+      assert.equal((await db.query('SELECT * FROM schema_migrations')).rows.length,9);
     });
     await run({action:'device-create',tenantId,deviceId,simId:1});
     assert.equal(Number((await db.query('SELECT paused FROM devices')).rows[0]!.paused),1);

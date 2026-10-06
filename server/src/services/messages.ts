@@ -1,17 +1,20 @@
+import { assertTenantActive, tenantSettings } from './tenant-services.js';
 import { randomUUID } from 'node:crypto';
-import type { Database } from '../db/database.js';
+import type { Connection, Database } from '../db/database.js';
 import { contentCipher, digest } from '../security/crypto.js';
 import { ApiError, canonicalMessage } from './policy.js';
 export interface Actor { id: string; tenant_id: string; scopes: string[] }
 export function messageService(db: Database, cipher: ReturnType<typeof contentCipher>) {
   return {
-    async create(actor: Actor, key: string, input: unknown) {
+    async create(actor: Actor, key: string, input: unknown, connection?: Connection) {
       const message = canonicalMessage(input);
       const fingerprint = digest(JSON.stringify(message));
-      return db.transaction(async tx => {
+      const enqueue = async (tx: Connection) => {
         // A single durable policy lock serializes all reservations at MVP volume.
         // Pause, suppression and provisioning must acquire this lock before mutation.
-        const settings = (await tx.query('SELECT * FROM gateway_settings WHERE id = true FOR UPDATE')).rows[0];
+        const defaults = (await tx.query('SELECT * FROM gateway_settings WHERE id = true FOR UPDATE')).rows[0];
+        await assertTenantActive(tx,actor.tenant_id);
+        const settings=await tenantSettings(tx,actor.tenant_id,defaults);
         const identity = (await tx.query('SELECT c.enabled, c.scopes, t.enabled AS tenant_enabled FROM api_clients c JOIN tenants t ON t.id=c.tenant_id WHERE c.id=? AND c.tenant_id=?', [actor.id, actor.tenant_id])).rows[0];
         if (!identity?.enabled || !identity.tenant_enabled) throw new ApiError(401, 'UNAUTHORIZED');
         const scopes = typeof identity.scopes === 'string' ? JSON.parse(identity.scopes) : identity.scopes;
@@ -57,7 +60,8 @@ export function messageService(db: Database, cipher: ReturnType<typeof contentCi
         await tx.query("INSERT INTO outbox_events (id,job_id,event_type) VALUES (?,?,'JOB_AVAILABLE')", [randomUUID(),jobId]);
         await tx.query("INSERT INTO audit_logs (tenant_id,actor_id,action,resource_id) VALUES (?,?,'MESSAGE_ACCEPTED',?)", [actor.tenant_id,actor.id,jobId]);
         return { jobId, status: 'QUEUED', statusUrl: `/v1/messages/${jobId}` };
-      });
+      };
+      return connection ? enqueue(connection) : db.transaction(enqueue);
     },
   };
 }

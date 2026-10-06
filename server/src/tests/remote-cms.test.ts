@@ -48,6 +48,7 @@ test('remote login issues scoped secure cookies and preserves MFA and CSRF gates
      let rows:unknown[]=[];
      if(sql.includes('locked_until>CURRENT_TIMESTAMP'))rows=[{id:'user',username:'admin',role:'admin',enabled:true,locked:false,password_hash:hash,totp_enabled:false}];
      else if(sql.includes('FROM cms_sessions s'))rows=[{id:'user',username:'admin',role:'admin',mfa_verified:false}];
+     else if(sql.includes('FROM cms_user_tenants'))rows=[];
      else if(!/^(UPDATE cms_users|INSERT INTO audit_logs|DELETE FROM cms_sessions|INSERT INTO cms_sessions)/.test(sql))throw new Error(`Unexpected query: ${sql}`);
      return {rows:rows as T[]};
    },transaction:fn=>fn(fakeDb),withConnection:fn=>fn(fakeDb)

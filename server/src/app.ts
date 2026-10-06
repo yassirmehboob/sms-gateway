@@ -1,3 +1,4 @@
+import { assertTenantActive } from './services/tenant-services.js';
 import express from 'express';
 import { randomUUID } from 'node:crypto';
 import helmet from 'helmet';
@@ -25,7 +26,9 @@ export function createApp(db: Database, encryptionKey: string, options: { proxyH
   app.disable('x-powered-by');
   app.use(helmet());
   app.use(rateLimit({ windowMs: 60_000, limit: 60, standardHeaders: 'draft-8', legacyHeaders: false }));
-  app.use(express.json({ limit: '8kb', inflate:false, verify:(_req,res,body)=>{ (res as express.Response).locals.rawBody=Buffer.from(body); } }));
+  const normalJson=express.json({ limit: '8kb', inflate:false, verify:(_req,res,body)=>{ (res as express.Response).locals.rawBody=Buffer.from(body); } });
+  const importJson=express.json({limit:'3mb',inflate:false});
+  app.use((req,res,next)=>req.path.startsWith('/admin/api/') ? importJson(req,res,next) : normalJson(req,res,next));
   app.get('/healthz', (_req, res) => res.json({ status: 'ok' }));
   app.use('/admin',adminRoutes(db,encryptionKey,{basePath,publicOrigin:options.cmsOrigin}));
   app.use('/v1/device',deviceRoutes(db,encryptionKey));
@@ -35,6 +38,7 @@ export function createApp(db: Database, encryptionKey: string, options: { proxyH
     const result = await db.query<Actor>('SELECT c.id,c.tenant_id,c.scopes FROM api_clients c JOIN tenants t ON t.id=c.tenant_id WHERE c.key_hash=? AND c.enabled=true AND t.enabled=true', [digest(match[1]!)]);
     if (!result.rows[0]) throw new ApiError(401, 'UNAUTHORIZED');
     const identity = result.rows[0];
+    await assertTenantActive(db,identity.tenant_id);
     const scopes = z.array(z.string()).parse(typeof identity.scopes === 'string' ? JSON.parse(identity.scopes) : identity.scopes);
     res.locals.actor = { ...identity, scopes }; next();
   });
@@ -69,6 +73,7 @@ export function createApp(db: Database, encryptionKey: string, options: { proxyH
     const number = normalizeNumber(z.string().parse(req.params.number));
     await db.transaction(async tx => {
       await tx.query('SELECT id FROM gateway_settings WHERE id=true FOR UPDATE');
+      await assertTenantActive(tx,identity.tenant_id);
       const current = (await tx.query('SELECT c.scopes FROM api_clients c JOIN tenants t ON t.id=c.tenant_id WHERE c.id=? AND c.tenant_id=? AND c.enabled=true AND t.enabled=true', [identity.id,identity.tenant_id])).rows[0];
       if (!current) throw new ApiError(401, 'UNAUTHORIZED');
       const scopes = typeof current.scopes === 'string' ? JSON.parse(current.scopes) : current.scopes;

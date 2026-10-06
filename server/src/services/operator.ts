@@ -1,3 +1,4 @@
+import { assertTenantActive } from './tenant-services.js';
 import { z } from 'zod';
 import type { Database,Connection } from '../db/database.js';
 import { digest } from '../security/crypto.js';
@@ -30,6 +31,7 @@ export async function executeOperatorCommand(db: Database, input: unknown, autho
     if (!settings) throw new ApiError(503, 'GATEWAY_NOT_INITIALIZED');
     await authorize?.(tx);
     const tenant = 'tenantId' in command ? command.tenantId : null;
+    if(tenant && !['device-revoke','client-revoke','consent-revoke'].includes(command.action) && !(command.action==='device-pause'&&command.paused))await assertTenantActive(tx,tenant);
     if (tenant && !(await tx.query('SELECT id FROM tenants WHERE id=?', [tenant])).rows.length) throw new ApiError(404, 'TENANT_NOT_FOUND');
     let resource: string | null = null;
     let subjectHash: string | null = null;

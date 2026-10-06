@@ -1,3 +1,4 @@
+import { assertTenantActive, tenantPlan, reconcileTenantExpiry } from './tenant-services.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Connection, Database } from '../db/database.js';
@@ -5,19 +6,22 @@ import { contentCipher, digest } from '../security/crypto.js';
 import { verifyDeviceProof, type DeviceProof } from '../security/device-signatures.js';
 import { ApiError } from './policy.js';
 import { controlSchema, receiveControl } from './sms-controls.js';
+import { campaignCreatorAllowed } from '../security/cms-access.js';
 
 const readiness=z.object({subscriptionId:z.number().int().min(0),canSendSms:z.boolean(),locallyPaused:z.boolean()}).strict();
 const eventSchema=z.object({eventId:z.uuid(),leaseId:z.uuid(),partIndex:z.literal(0),type:z.enum(['SENT_TO_CARRIER','DELIVERED','FAILED_DEFINITE','UNKNOWN'])}).strict();
 
 export async function reconcileJobs(tx: Connection) {
+  await reconcileTenantExpiry(tx);
   await tx.query("UPDATE outbound_messages SET status='EXPIRED' WHERE status IN ('QUEUED','CLAIMED') AND send_attempt_started_at IS NULL AND expires_at<=CURRENT_TIMESTAMP(6)");
   await tx.query("UPDATE outbound_messages SET status='QUEUED',lease_id=NULL,lease_expires_at=NULL WHERE status='CLAIMED' AND send_attempt_started_at IS NULL AND lease_expires_at<=CURRENT_TIMESTAMP(6)");
   await tx.query("UPDATE outbound_messages SET status='UNKNOWN' WHERE status='ATTEMPT_RECORDED' AND send_attempt_started_at<=CURRENT_TIMESTAMP(6)-INTERVAL 2 MINUTE");
   await tx.query('DELETE FROM device_nonces WHERE expires_at<CURRENT_TIMESTAMP(6)');
+  await tx.query('DELETE FROM cms_sessions WHERE expires_at<CURRENT_TIMESTAMP(6)');
 }
 
 export function deviceService(db: Database, cipher: ReturnType<typeof contentCipher>) {
-  async function signed<T>(proof: DeviceProof, fn:(tx:Connection,device:Record<string,any>)=>Promise<T>, token?:string) {
+  async function signed<T>(proof: DeviceProof, fn:(tx:Connection,device:Record<string,any>)=>Promise<T>, token?:string, allowExpired=false) {
     const outcome=await db.transaction(async tx=>{
       await tx.query('SELECT id FROM gateway_settings WHERE id=1 FOR UPDATE');
       const device=(await tx.query('SELECT d.*,t.enabled AS tenant_enabled,UNIX_TIMESTAMP(CURRENT_TIMESTAMP(6)) AS server_seconds FROM devices d JOIN tenants t ON t.id=d.tenant_id WHERE d.id=?',[proof.deviceId])).rows[0];
@@ -35,7 +39,7 @@ export function deviceService(db: Database, cipher: ReturnType<typeof contentCip
       device.verified_key=key;
       // Keep the nonce even for rejected operations; roll back their writes.
       await tx.query('SAVEPOINT device_operation');
-      try { return {ok:true as const,value:await fn(tx,device)}; }
+      try { return {ok:true as const,value:await (async()=>{if(!allowExpired)await assertTenantActive(tx,device.tenant_id);return fn(tx,device);})()}; }
       catch(error) { await tx.query('ROLLBACK TO SAVEPOINT device_operation');return {ok:false as const,error}; }
     });
     if(!outcome.ok) throw outcome.error;
@@ -48,6 +52,10 @@ export function deviceService(db: Database, cipher: ReturnType<typeof contentCip
     if(!state.canSendSms || state.locallyPaused || state.subscriptionId!==device.allowed_sim_id) throw new ApiError(409,'DEVICE_NOT_READY');
   }
   async function policy(tx:Connection,job:Record<string,any>) {
+    const campaign=(await tx.query('SELECT c.status,c.created_by FROM campaign_recipients r JOIN campaigns c ON c.id=r.campaign_id WHERE r.job_id=?',[job.id])).rows[0];
+    if(campaign?.status==='PAUSED')throw new ApiError(503,'CAMPAIGN_PAUSED');
+    if(campaign?.status==='CANCELLED')throw new ApiError(403,'SEND_POLICY_REVOKED');
+    if(campaign&&!await campaignCreatorAllowed(tx,campaign.created_by,job.tenant_id))throw new ApiError(403,'SEND_POLICY_REVOKED');
     const result=(await tx.query('SELECT c.enabled,r.suppressed,c.scopes FROM api_clients c JOIN recipients r ON r.normalized_e164=? WHERE c.id=? AND c.tenant_id=?',[job.normalized_e164,job.client_id,job.tenant_id])).rows[0];
     const scopes=typeof result?.scopes==='string'?JSON.parse(result.scopes):result?.scopes;
     const consent=await tx.query("SELECT 1 FROM recipient_tenant_consents WHERE tenant_id=? AND normalized_e164=? AND purpose='transactional_notification' AND revoked_at IS NULL",[job.tenant_id,job.normalized_e164]);
@@ -58,7 +66,7 @@ export function deviceService(db: Database, cipher: ReturnType<typeof contentCip
   return {
     inbound(proof:DeviceProof,input:unknown) {
       const event = controlSchema.parse(input);
-      return signed(proof, (tx,device) => receiveControl(tx,device,event,cipher));
+      return signed(proof, (tx,device) => receiveControl(tx,device,event,cipher),undefined,true);
     },
     enroll(proof:DeviceProof,input:unknown) {
       const {enrollmentToken}=z.object({enrollmentToken:z.string().regex(/^[A-Za-z0-9_-]{43}$/)}).strict().parse(input);
@@ -75,8 +83,8 @@ export function deviceService(db: Database, cipher: ReturnType<typeof contentCip
         await reconcileJobs(tx);
         await tx.query('UPDATE devices SET last_seen_at=CURRENT_TIMESTAMP(6) WHERE id=?',[proof.deviceId]);
         const settings=(await tx.query('SELECT paused FROM gateway_settings WHERE id=1')).rows[0];
-        return {paused:Boolean(settings?.paused || device.paused),subscriptionId:device.allowed_sim_id};
-      });
+        return {paused:Boolean(settings?.paused || device.paused || !(await tenantPlan(tx,device.tenant_id)).active),subscriptionId:device.allowed_sim_id};
+      },undefined,true);
     },
     fcmToken(proof:DeviceProof,input:unknown) {
       const {token}=z.object({token:z.string().min(20).max(4096)}).strict().parse(input);
@@ -88,7 +96,7 @@ export function deviceService(db: Database, cipher: ReturnType<typeof contentCip
     claim(proof:DeviceProof,input:unknown) {
       return signed(proof,async(tx,device)=>{
         await ready(tx,device,input); await reconcileJobs(tx);
-        const job=(await tx.query("SELECT * FROM outbound_messages WHERE device_id=? AND tenant_id=? AND status IN ('QUEUED','CLAIMED') AND send_attempt_started_at IS NULL AND expires_at>CURRENT_TIMESTAMP(6) ORDER BY (status='CLAIMED') DESC,created_at,id LIMIT 1 FOR UPDATE",[proof.deviceId,device.tenant_id])).rows[0];
+        const job=(await tx.query("SELECT * FROM outbound_messages m WHERE device_id=? AND tenant_id=? AND status IN ('QUEUED','CLAIMED') AND send_attempt_started_at IS NULL AND expires_at>CURRENT_TIMESTAMP(6) AND NOT EXISTS (SELECT 1 FROM campaign_recipients cr JOIN campaigns c ON c.id=cr.campaign_id WHERE cr.job_id=m.id AND c.status='PAUSED') ORDER BY (status='CLAIMED') DESC,created_at,id LIMIT 1 FOR UPDATE",[proof.deviceId,device.tenant_id])).rows[0];
         if(!job) return {job:null};
         try { await policy(tx,job); }
         catch (error) {
@@ -113,7 +121,12 @@ export function deviceService(db: Database, cipher: ReturnType<typeof contentCip
         // Never reissue authorization, even after a lost response. Reconcile as UNKNOWN.
         if(job.status!=='CLAIMED' || job.send_attempt_started_at || job.lease_id!==parsed.leaseId || !job.valid) throw new ApiError(409,'ATTEMPT_NOT_AUTHORIZED');
         await policy(tx,job);
+        const plan=await assertTenantActive(tx,device.tenant_id);
+        if(plan.expires_at){job.lease_expires_at=new Date(Math.min(new Date(job.lease_expires_at).getTime(),new Date(plan.expires_at).getTime()));job.valid_for_ms=Math.min(Number(job.valid_for_ms),Number(plan.remaining_ms));}
         await tx.query("UPDATE outbound_messages SET status='ATTEMPT_RECORDED',send_attempt_started_at=CURRENT_TIMESTAMP(6) WHERE id=?",[jobId]);
+        // Start the bulk interval after this authorization's send window closes.
+        // This remains conservative if the callback or authorization response is lost.
+        if((await tx.query('SELECT 1 FROM campaign_recipients WHERE job_id=?',[jobId])).rows.length)await tx.query('UPDATE gateway_settings SET bulk_last_activity_at=LEAST(?,?),bulk_last_tenant_id=? WHERE id=1',[job.expires_at,job.lease_expires_at,device.tenant_id]);
         await tx.query("INSERT INTO audit_logs (tenant_id,actor_id,action,resource_id) VALUES (?,?,'ATTEMPT_AUTHORIZED',?)",[device.tenant_id,proof.deviceId,jobId]);
         return {jobId,leaseId:parsed.leaseId,authorized:true,validUntil:job.lease_expires_at,validForMs:Math.max(0,Math.floor(Number(job.valid_for_ms)))};
       });
@@ -136,7 +149,7 @@ export function deviceService(db: Database, cipher: ReturnType<typeof contentCip
         await tx.query('UPDATE outbound_messages SET status=? WHERE id=?',[status,jobId]);
         await tx.query('INSERT INTO device_events (device_id,event_id,job_id,request_hash,event_type,resulting_status) VALUES (?,?,?,?,?,?)',[proof.deviceId,event.eventId,jobId,hash,event.type,status]);
         return {jobId,status};
-      });
+      },undefined,true);
     },
   };
 }

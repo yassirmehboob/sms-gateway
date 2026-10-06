@@ -21,7 +21,7 @@ test('CMS login, MFA, CSRF, roles and audited policy controls', {skip:!process.e
  const fixture=await databaseFixture(),{db}=fixture;
  try {
    const id=randomUUID(),password='test-admin-password-1234';
-   await db.query('INSERT INTO cms_users (id,username,password_hash) VALUES (?,?,?)',[id,'admin',await passwordHash(password)]);
+   await db.query('INSERT INTO cms_users (id,username,password_hash,super_admin,all_tenants) VALUES (?,?,?,true,true)',[id,'admin',await passwordHash(password)]);
    const app=createApp(db,'ab'.repeat(32));const agent=request.agent(app);
    const post=(path:string,body:unknown,csrf='')=>agent.post(`/admin/api${path}`).set('X-CMS-Request','1').set('X-CSRF-Token',csrf).send(body as object);
    assert.equal((await agent.get('/admin/')).status,200);

@@ -1,5 +1,7 @@
 # CloudLinux Passenger startup troubleshooting
 
+If running migrations fails inside `tsx` with `WebAssembly.instantiate(): Out of memory`, use `node dist/db/migrate.js` from the application root. The updated package's `npm run migrate` uses this compiled command and avoids the TypeScript/WebAssembly loader. Select Node 24 to match the project's runtime requirement. See [migration recovery steps](contacts-and-bulk-messaging.md#cpanel-migration-reports-webassembly-out-of-memory).
+
 Upload the updated server source and `app.cjs`, then build with `npm run build`
 in the activated cPanel Node environment. Select `app.cjs` as the startup file.
 
@@ -82,3 +84,5 @@ localhost-only CMS access. The FCM worker remains separate from the web process.
 References:
 - https://expressjs.com/en/guide/behind-proxies/
 - https://www.phusionpassenger.com/docs/advanced_guides/in_depth/node/reverse_port_binding.html
+
+For tenant defaults and subscription expiry, use the [migration 009 update guide](tenant-defaults-and-expiry.md#cpanel-update). Restart any separate workers as well as the web application.

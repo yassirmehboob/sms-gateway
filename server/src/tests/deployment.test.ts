@@ -47,6 +47,7 @@ test('message responses and Location headers retain the public prefix', async ()
     async query<T>(sql: string) {
       let row: unknown;
       if (sql.includes('c.key_hash')) row = actor;
+      else if (sql.includes('LEFT JOIN tenant_plans')) row = { enabled: true, expired: false, settings_json: '{}' };
       else if (sql.includes('gateway_settings')) row = { paused: false };
       else if (sql.includes('c.enabled, c.scopes')) row = { enabled: true, tenant_enabled: true, scopes: actor.scopes };
       else if (sql.includes('idempotency_keys')) row = { request_hash: digest(JSON.stringify(canonicalMessage(body))), job_id: jobId };

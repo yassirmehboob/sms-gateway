@@ -2,7 +2,7 @@
 const $=id=>document.getElementById(id);
 const state={session:null,overview:null,page:'dashboard',recipientOffset:0,messageOffset:0,search:''};
 function notice(text,error=false){$('notice').textContent=text;$('notice').classList.toggle('error',error);$('notice').hidden=false;}
-const errors={CMS_LOGIN_REQUIRED:'Please sign in again.',INVALID_LOGIN:'Invalid login, authenticator code, or temporarily locked account. After repeated failures, wait 15 minutes.',MFA_REQUIRED:'Complete authenticator setup first.',INVALID_AUTHENTICATOR_CODE:'That code did not match. Check your phone clock and try the current code.',CMS_LOCAL_ONLY:'Open this console on the backend PC using its localhost CMS address.',INVALID_REQUEST:'Check the form values and change reference. Use letters, numbers, dots, slashes, underscores or hyphens for references.'};
+const errors={TENANT_EXPIRED:'This tenant subscription has expired. Contact the platform administrator to renew.',TENANT_DISABLED:'This tenant is disabled.',CMS_LOGIN_REQUIRED:'Please sign in again.',INVALID_LOGIN:'Invalid login, authenticator code, or temporarily locked account. After repeated failures, wait 15 minutes.',MFA_REQUIRED:'Complete authenticator setup first.',INVALID_AUTHENTICATOR_CODE:'That code did not match. Check your phone clock and try the current code.',CMS_LOCAL_ONLY:'Open this console on the backend PC using its localhost CMS address.',INVALID_REQUEST:'Check the form values and change reference. Use letters, numbers, dots, slashes, underscores or hyphens for references.'};
 async function api(path,body){
  const options={credentials:'same-origin',headers:{'X-CMS-Request':'1'}};
  if(body!==undefined){options.method='POST';options.headers['Content-Type']='application/json';options.headers['X-CSRF-Token']=state.session?.csrf??'';options.body=JSON.stringify(body);}
@@ -16,9 +16,27 @@ function formValues(form){return Object.fromEntries(new FormData(form));}
 function result(title,value){$('result-title').textContent=title;$('result-text').textContent=JSON.stringify(value,null,2);$('result-dialog').showModal();}
 function showSession(){
  $('login-panel').hidden=!!state.session;$('mfa-panel').hidden=!state.session?.mfaRequired;$('console').hidden=!state.session||state.session.mfaRequired;
- $('identity').textContent=state.session?`${state.session.username} · ${state.session.role}`:'';
+ $('identity').textContent=state.session?`${state.session.username} · ${state.session.access?.superAdmin?'super admin':state.session.role}`:'';
 }
-function permissions(){document.querySelectorAll('[data-admin]').forEach(button=>button.disabled=state.session?.role!=='admin');}
+function can(section,manage=false,global=false){
+ const access=state.session?.access;if(!access)return false;
+ if(section==='account')return true;
+ if(section==='users')return access.superAdmin;
+ const level=access.permissions?.[section];
+ return (manage?level==='manage':level==='view'||level==='manage')&&(!global||access.allTenants);
+}
+function permissions(){
+ document.querySelectorAll('[data-page]').forEach(button=>button.hidden=!can(button.dataset.page));
+ document.querySelectorAll('[data-admin]').forEach(button=>{
+  const section=button.dataset.permission??button.closest('.page')?.id;
+  const global=button.hasAttribute('data-global')||!!button.closest('#recipient-table,#tenant-form')||section==='settings'||section==='dashboard';
+  button.disabled=!can(section,!button.hasAttribute('data-view'),global);
+ });
+ for(const [id,section] of [['contact-form','contacts'],['contact-import-form','contacts'],['group-form','contacts'],['membership-form','contacts'],['campaign-form','bulk'],['device-form','devices'],['enrollment-form','devices'],['client-form','clients'],['consent-form','recipients']])if($(id))$(id).hidden=!can(section,true);
+ $('tenant-form').hidden=!can('clients',true,true);
+ $('configuration').closest('article').hidden=!state.session?.access?.allTenants;
+ document.querySelectorAll('#contact-form [name=evidenceReference],#contact-import-form [name=evidenceReference]').forEach(input=>{input.disabled=!can('recipients',true);input.closest('label').hidden=input.disabled;if(input.disabled)input.value='';});
+}
 function reason(action){return window.prompt('Change / evidence reference',`CMS-${action.toUpperCase()}`);}
 async function command(command,reasonReference){
  reasonReference=reasonReference??reason(command.action);if(!reasonReference)return null;
@@ -42,6 +60,7 @@ function fieldHelp(input,description){
  input.setAttribute('aria-describedby',help.id);input.insertAdjacentElement('afterend',help);
 }
 const fieldDefinitions={
+ bulk_delay_seconds:['Bulk message interval / seconds',1,86400,'Minimum wait between bulk messages. Default 60 seconds. Device processing may add time. Use your carrier-approved limits; this setting does not guarantee carrier acceptance.'],
  recipient_quota:['Recipient quota / 24 hours',1,1000,'Maximum accepted messages to one number in the last 24 hours, across all clients and devices.'],
  cooldown_seconds:['Destination cooldown / seconds',0,86400,'Minimum wait between accepted messages to the same number. 300 seconds = 5 minutes; 0 disables the wait.'],
  client_quota:['Client quota / hour',1,10000,'Maximum accepted messages per API client in the last hour.'],
@@ -68,16 +87,16 @@ for(const [formId,fields] of Object.entries(formDescriptions)){
  for(const [name,description] of Object.entries(fields))fieldHelp($(formId).elements.namedItem(name),description);
 }
 async function overview(){
- state.overview=await api('/overview');const data=state.overview;
+ state.overview=await api('/overview');const data=state.overview;state.session.access=data.access;showSession();
  $('gateway-badge').textContent=data.settings.paused?'PAUSED':'ENABLED';$('gateway-badge').classList.toggle('paused',!!data.settings.paused);
  const counts=Object.fromEntries(data.counts.map(r=>[r.status,Number(r.count)]));
  $('stats').replaceChildren();
- for(const [label,value] of [['Registered devices',data.devices.length],['Queued today',counts.QUEUED??0],['Delivered today',counts.DELIVERED??0],['Uncertain today',counts.UNKNOWN??0]]){
+ for(const [label,value] of [['Registered devices',data.deviceCount],['Queued today',counts.QUEUED??0],['Delivered today',counts.DELIVERED??0],['Uncertain today',counts.UNKNOWN??0]]){
    const div=document.createElement('div');div.className='stat';const strong=document.createElement('strong');strong.textContent=value;const span=document.createElement('span');span.textContent=label;div.append(strong,span);$('stats').append(div);
  }
  $('configuration').replaceChildren();
  for(const [label,value] of [['API address',`${data.configuration.apiHost}:${data.configuration.apiPort}`],['FCM worker enabled',data.configuration.fcmEnabled?'Yes':'No'],['Firebase project configured',data.configuration.firebaseConfigured?'Yes':'No'],['Credential file configured',data.configuration.credentialsConfigured?'Yes':'No'],['Admin access',window.location.origin]]){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=value;$('configuration').append(dt,dd);}
- for(const name of Object.keys(fieldDefinitions))$('settings-form').elements[name].value=data.settings[name];
+ for(const name of Object.keys(fieldDefinitions))$('settings-form').elements[name].value=data.settings[name]??'';
  document.querySelectorAll('.tenant-select').forEach(select=>{const previous=select.value;select.replaceChildren();data.tenants.forEach(t=>{const option=document.createElement('option');option.value=t.id;option.textContent=`${t.name} (${t.id})`;select.append(option);});if(data.tenants.some(t=>t.id===previous))select.value=previous;});
  const deviceSelect=$('enrollment-device'),selected=deviceSelect.value;deviceSelect.replaceChildren();data.devices.filter(d=>!d.enrolled&&!d.revoked_at).forEach(d=>{const option=document.createElement('option');option.value=d.id;option.textContent=`${tenantName(d.tenant_id)} · ${d.id}`;deviceSelect.append(option);});if([...deviceSelect.options].some(o=>o.value===selected))deviceSelect.value=selected;
  table('device-table',['Device UUID','Tenant / SIM','Enrollment / FCM','Last seen','Status','Actions'],data.devices.map(d=>[
@@ -89,6 +108,7 @@ async function overview(){
  table('client-table',['Client UUID','Tenant','Status','Actions'],data.clients.map(c=>[cell(c.id,true),tenantName(c.tenant_id),c.enabled?'Enabled':'Revoked',!c.enabled?'—':actions(
    action('Rotate key',async()=>{if(!confirm('Replace this API key? The old key stops working immediately.'))return;const response=await command({action:'client-rotate',tenantId:c.tenant_id,clientId:c.id});if(response){result('New API key',response);await refresh();}}),
    action('Revoke',async()=>{if(!confirm('Revoke this client and cancel pending jobs?'))return;if(await command({action:'client-revoke',tenantId:c.tenant_id,clientId:c.id}))await refresh();},true))]));
+ if(typeof renderTenantServices==='function')await renderTenantServices();
  permissions();$('updated').textContent=`Updated ${new Date().toLocaleTimeString()}`;
 }
 async function recipients(){const data=await api(`/recipients?search=${encodeURIComponent(state.search)}&offset=${state.recipientOffset}`);
@@ -99,7 +119,7 @@ async function recipients(){const data=await api(`/recipients?search=${encodeURI
 }
 async function messages(){const data=await api(`/messages?offset=${state.messageOffset}`);table('message-table',['Job UUID','Recipient','Status','Type','Created','Expires'],data.messages.map(m=>[cell(m.id,true),m.normalized_e164,m.status,m.control_command??'Normal',date(m.created_at),date(m.expires_at)]));$('message-prev').disabled=state.messageOffset===0;$('message-next').disabled=data.messages.length<50;}
 async function audit(){const data=await api('/audit');table('audit-table',['When','Action','Actor','Resource','Reference'],data.audit.map(a=>[date(a.recorded_at),a.action,cell(a.actor_id,true),cell(a.resource_id,true),a.reason_reference]));}
-async function page(name){state.page=name;document.querySelectorAll('.page').forEach(el=>el.hidden=el.id!==name);document.querySelectorAll('[data-page]').forEach(el=>el.classList.toggle('active',el.dataset.page===name));if(name==='recipients')await recipients();if(name==='messages')await messages();if(name==='audit')await audit();}
+async function page(name){if(!can(name))name=[...document.querySelectorAll('[data-page]')].find(button=>can(button.dataset.page))?.dataset.page??'account';state.page=name;document.querySelectorAll('.page').forEach(el=>el.hidden=el.id!==name);document.querySelectorAll('[data-page]').forEach(el=>el.classList.toggle('active',el.dataset.page===name));if(name==='recipients')await recipients();if(name==='messages')await messages();if(name==='audit')await audit();if(name==='contacts'||name==='bulk')await loadContactsPage(name);if(name==='users')await loadCmsUsers();if(name==='settings')await loadTenantSettings();permissions();}
 async function refresh(){await overview();await page(state.page);}
 $('login-form').addEventListener('submit',run(async()=>{const input=formValues($('login-form'));if(!input.code)delete input.code;state.session=await api('/login',input);$('login-form').reset();showSession();if(!state.session.mfaRequired)await refresh();}));
 $('mfa-generate').addEventListener('click',run(async()=>{const data=await api('/mfa/setup',{});$('mfa-secret').textContent=`Account: ${data.account}\nSetup key: ${data.secret}`;$('mfa-secret').hidden=false;}));
@@ -118,7 +138,7 @@ $('message-next').addEventListener('click',run(async()=>{state.messageOffset+=50
 $('consent-form').addEventListener('submit',run(async event=>{const data=formValues($('consent-form'));const commandData={action:event.submitter.value,tenantId:data.tenantId,number:data.number,purpose:'transactional_notification'};if(commandData.action==='consent-grant')commandData.evidenceReference=data.evidenceReference;if(await command(commandData,data.evidenceReference))await recipients();}));
 $('device-form').addEventListener('submit',run(async()=>{const data=formValues($('device-form'));const commandData={action:'device-create',tenantId:data.tenantId,deviceId:crypto.randomUUID(),simId:Number(data.simId)};if(await command(commandData)){result('Enter this UUID in the Android app',{deviceId:commandData.deviceId,subscriptionId:commandData.simId});await refresh();}}));
 $('enrollment-form').addEventListener('submit',run(async()=>{const data=formValues($('enrollment-form'));const device=state.overview.devices.find(d=>d.id===data.deviceId);if(!device)throw new Error('Select an unpaired device.');const response=await command({action:'device-enrollment',tenantId:device.tenant_id,deviceId:device.id,publicKey:data.publicKey.trim()});if(response){result('Enrollment token · valid for 10 minutes',response);$('enrollment-form').reset();await refresh();}}));
-$('tenant-form').addEventListener('submit',run(async()=>{const response=await command({action:'tenant-create',...formValues($('tenant-form'))});if(response){$('tenant-form').reset();await refresh();}}));
+$('tenant-form').addEventListener('submit',run(async()=>{const values=formValues($('tenant-form'));const response=await command({action:'tenant-create',name:values.name,expiresAt:values.expiresAt?new Date(values.expiresAt).toISOString():null});if(response){$('tenant-form').reset();await refresh();}}));
 $('client-form').addEventListener('submit',run(async()=>{const response=await command({action:'client-create',...formValues($('client-form'))});if(response){result('API key · shown once',response);await refresh();}}));
 $('password-form').addEventListener('submit',run(async()=>{await api('/password',formValues($('password-form')));$('password-form').reset();state.session=null;showSession();notice('Password changed. Sign in with your new password and authenticator code.');}));
 $('result-close').addEventListener('click',()=>{$('result-dialog').close();$('result-text').textContent='';});

@@ -10,7 +10,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "migrate": "tsx src/db/migrate.ts",
+    "migrate": "node dist/db/migrate.js",
+    "migrate:dev": "tsx src/db/migrate.ts",
     "seed:dev": "tsx src/db/seed.ts",
     "test": "tsx --test src/tests/*.test.ts",
     "operator": "tsx src/operator.ts",
@@ -19,6 +20,7 @@
   },
   "dependencies": {
     "dotenv": "^18.0.3",
+    "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.0",
     "firebase-admin": "^14.4.0",
@@ -28,7 +30,12 @@
     "zod": "^4.6.5"
   },
   "overrides": {
-    "gaxios": { "uuid": "^11.1.1" }
+    "exceljs": {
+      "uuid": "^11.1.1"
+    },
+    "gaxios": {
+      "uuid": "^11.1.1"
+    }
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
